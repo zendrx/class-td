@@ -389,11 +389,18 @@
         }
         
         // Zendrx gate
-        loveBtn.onclick = () => {
-            gateModal.classList.add('hidden');
-            gameContainer.classList.remove('hidden');
-            initGame();
-        };
+        // Zendrx gate - FIXED
+let gameInitialized = false;
+
+loveBtn.onclick = () => {
+    gateModal.classList.add('hidden');
+    gameContainer.classList.remove('hidden');
+    
+    if (!gameInitialized) {
+        initGame();
+        gameInitialized = true;
+    }
+};
         
         hateBtn.onclick = () => {
             gateModal.innerHTML = '<div class="modal-content"><h1>❌ REJECTED ❌</h1><p>You must love Zendrx to play!</p><button onclick="location.reload()">Try Again</button></div>';
@@ -737,6 +744,8 @@
             spinTargetRotation = spinStartRotation + (turns * Math.PI * 2);
             playBeep();
         }
+        // Start Three.js immediately (so it's ready when gate opens)
+       initThreeJS();
     </script>
 </body>
 </html>
