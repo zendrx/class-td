@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Truth or Dare - Anonymous Bottle Spin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Main game container */
+        .game-container {
+            display: flex;
+            height: 100vh;
+            flex-direction: row;
+        }
+
+        /* Left panel - 3D Bottle */
+        .bottle-panel {
+            flex: 2;
+            position: relative;
+            background: rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }
+
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+
+        /* Right panel - players and chat */
+        .info-panel {
+            flex: 1;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        /* Players section */
+        .players-section {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 15px;
+        }
+
+        .players-section h3 {
+            margin-bottom: 10px;
+            color: #ffd700;
+        }
+
+        .players-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .player-card {
+            background: rgba(255,255,255,0.15);
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .player-card.ready {
+            background: rgba(76, 175, 80, 0.6);
+            border: 1px solid #4caf50;
+        }
+
+        .ready-badge {
+            font-size: 12px;
+        }
+
+        /* Controls section */
+        .controls-section {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 15px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .ready-btn {
+            background: linear-gradient(135deg, #4caf50, #45a049);
+        }
+
+        .ready-btn.active {
+            background: linear-gradient(135deg, #ff9800, #f57c00);
+        }
+
+        .spin-btn {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        /* Chat section */
+        .chat-section {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 15px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            padding: 10px;
+            min-height: 200px;
+        }
+
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 8px;
+            animation: fadeIn 0.3s;
+        }
+
+        .message.question {
+            background: rgba(255, 215, 0, 0.2);
+            border-left: 3px solid #ffd700;
+        }
+
+        .message.answer {
+            background: rgba(76, 175, 80, 0.2);
+            border-left: 3px solid #4caf50;
+        }
+
+        .message.system {
+            background: rgba(100, 100, 100, 0.3);
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 20px;
+            border: none;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            outline: none;
+        }
+
+        input::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+
+        /* Countdown display */
+        .countdown {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 48px;
+            font-weight: bold;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 50px;
+            z-index: 10;
+            font-family: monospace;
+        }
+
+        /* Role indicators */
+        .role-indicator {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 10;
+            text-align: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Zendrx gate modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .modal button {
+            margin: 10px;
+            width: auto;
+            padding: 10px 30px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .game-container {
+                flex-direction: column;
+            }
+            .bottle-panel {
+                flex: 1;
+                min-height: 300px;
+            }
+            .info-panel {
+                flex: 2;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Zendrx Gate Modal -->
+    <div id="gateModal" class="modal">
+        <div class="modal-content">
+            <h1>⚠️ DO YOU LOVE ZENDRX? ⚠️</h1>
+            <p style="margin: 20px 0;">Only true believers may enter...</p>
+            <button id="loveZendrxBtn">YES ❤️</button>
+            <button id="hateZendrxBtn">NO 💔</button>
+        </div>
+    </div>
+
+    <div id="gameContainer" class="hidden">
+        <div class="game-container">
+            <!-- Left: 3D Bottle -->
+            <div class="bottle-panel">
+                <div id="countdownDisplay" class="countdown hidden"></div>
+                <div id="roleDisplay" class="role-indicator hidden"></div>
+                <div id="canvas-container"></div>
+            </div>
+
+            <!-- Right: Info Panel -->
+            <div class="info-panel">
+                <div class="players-section">
+                    <h3>🎭 Players in Room</h3>
+                    <div id="playersList" class="players-list">Waiting for players...</div>
+                </div>
+
+                <div class="controls-section">
+                    <button id="readyBtn" class="ready-btn">✅ Ready Up</button>
+                    <button id="spinBtn" class="spin-btn" disabled>🍾 Spin the Bottle</button>
+                    <button id="nextRoundBtn" disabled>➡️ Next Round</button>
+                </div>
+
+                <div class="chat-section">
+                    <h3>💬 Game Chat</h3>
+                    <div id="messages" class="messages"></div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chatInput" placeholder="Type here..." disabled>
+                        <button id="sendBtn" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.io and Three.js -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let socket;
+        let myId;
+        let myAnonymousName;
+        let isReady = false;
+        let gameActive = false;
+        let currentRound = null;
+        let canType = false;
+        let myRole = null; // 'bottom' or 'top'
+        let countdownInterval;
+        
+        // Three.js variables
+        let scene, camera, renderer, bottle, bottleGroup;
+        let spinning = false;
+        let spinDuration = 2000;
+        let spinStartTime = 0;
+        let spinStartRotation = 0;
+        let spinTargetRotation = 0;
+        
+        // DOM elements
+        const gateModal = document.getElementById('gateModal');
+        const gameContainer = document.getElementById('gameContainer');
+        const loveBtn = document.getElementById('loveZendrxBtn');
+        const hateBtn = document.getElementById('hateZendrxBtn');
+        const readyBtn = document.getElementById('readyBtn');
+        const spinBtn = document.getElementById('spinBtn');
+        const nextRoundBtn = document.getElementById('nextRoundBtn');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const messagesDiv = document.getElementById('messages');
+        const playersListDiv = document.getElementById('playersList');
+        const countdownDisplay = document.getElementById('countdownDisplay');
+        const roleDisplay = document.getElementById('roleDisplay');
+        
+        // Audio context for beeps
+        let audioCtx = null;
+        
+        function playBeep() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.frequency.value = 880;
+            gainNode.gain.value = 0.3;
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3);
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        // Zendrx gate
+        loveBtn.onclick = () => {
+            gateModal.classList.add('hidden');
+            gameContainer.classList.remove('hidden');
+            initGame();
+        };
+        
+        hateBtn.onclick = () => {
+            gateModal.innerHTML = '<div class="modal-content"><h1>❌ REJECTED ❌</h1><p>You must love Zendrx to play!</p><button onclick="location.reload()">Try Again</button></div>';
+        };
+        
+        function addMessage(text, type = 'system') {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${type}`;
+            msgDiv.textContent = text;
+            messagesDiv.appendChild(msgDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function initGame() {
+            socket = io();
+            
+            socket.on('connect', () => {
+                myId = socket.id;
+                addMessage('Connected to game!', 'system');
+            });
+            
+            socket.on('players-update', (players) => {
+                playersListDiv.innerHTML = '';
+                players.forEach(player => {
+                    const playerDiv = document.createElement('div');
+                    playerDiv.className = `player-card ${player.ready ? 'ready' : ''}`;
+                    playerDiv.innerHTML = `
+                        ${player.anonymousName}
+                        ${player.ready ? '<span class="ready-badge">✅</span>' : '<span class="ready-badge">⏳</span>'}
+                        ${player.id === myId ? ' (YOU)' : ''}
+                    `;
+                    playersListDiv.appendChild(playerDiv);
+                });
+                
+                // Update ready button text
+                const me = players.find(p => p.id === myId);
+                if (me) {
+                    isReady = me.ready;
+                    readyBtn.textContent = isReady ? '✅ Ready!' : '✅ Ready Up';
+                    readyBtn.classList.toggle('active', isReady);
+                }
+                
+                // Enable/disable spin button based on game state and players count
+                if (gameActive && !currentRound && players.length >= 2) {
+                    spinBtn.disabled = false;
+                } else {
+                    spinBtn.disabled = true;
+                }
+            });
+            
+            socket.on('game-state', (state) => {
+                gameActive = state.gameActive;
+                currentRound = state.currentRound;
+                
+                if (gameActive && currentRound) {
+                    // Check my role
+                    if (currentRound.bottomId === myId) {
+                        myRole = 'bottom';
+                        roleDisplay.textContent = '🎤 YOU ARE THE BOTTOM - Ask Truth or Dare! 🎤';
+                        roleDisplay.classList.remove('hidden');
+                        if (currentRound.state === 'waiting_question') {
+                            canType = true;
+                            chatInput.disabled = false;
+                            chatInput.placeholder = "Ask 'Truth or Dare?'...";
+                            addMessage('You are the BOTTOM! Ask a Truth or Dare question.', 'system');
+                        }
+                    } else if (currentRound.topId === myId) {
+                        myRole = 'top';
+                        roleDisplay.textContent = '🎯 YOU ARE THE TOP - Wait for question... 🎯';
+                        roleDisplay.classList.remove('hidden');
+                        if (currentRound.state === 'waiting_answer') {
+                            canType = true;
+                            chatInput.disabled = false;
+                            chatInput.placeholder = "Answer: Truth or Dare? Then your response...";
+                            addMessage('You are the TOP! Answer the question.', 'system');
+                        } else {
+                            canType = false;
+                            chatInput.disabled = true;
+                        }
+                    } else {
+                        myRole = null;
+                        roleDisplay.classList.add('hidden');
+                        canType = false;
+                        chatInput.disabled = true;
+                    }
+                    
+                    // Display question/answer if available
+                    if (currentRound.question) {
+                        const bottomPlayer = findPlayerName(currentRound.bottomId);
+                        addMessage(`${bottomPlayer} asks: "${currentRound.question}"`, 'question');
+                    }
+                    if (currentRound.answer) {
+                        const topPlayer = findPlayerName(currentRound.topId);
+                        addMessage(`${topPlayer} answers: "${currentRound.answer}"`, 'answer');
+                    }
+                    
+                    // Enable next round button if round completed and I'm anyone
+                    if (currentRound.state === 'completed') {
+                        nextRoundBtn.disabled = false;
+                    } else {
+                        nextRoundBtn.disabled = true;
+                    }
+                } else {
+                    roleDisplay.classList.add('hidden');
+                    canType = false;
+                    chatInput.disabled = true;
+                    nextRoundBtn.disabled = true;
+                    if (gameActive && !currentRound) {
+                        spinBtn.disabled = false;
+                    }
+                }
+            });
+            
+            socket.on('countdown', (timeLeft) => {
+                countdownDisplay.classList.remove('hidden');
+                countdownDisplay.textContent = `⏰ ${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    countdownDisplay.classList.add('hidden');
+                }
+            });
+            
+            socket.on('beep', () => {
+                playBeep();
+            });
+            
+            socket.on('timeout', () => {
+                addMessage('⏰ Time\'s up! Round ended.', 'system');
+                canType = false;
+                chatInput.disabled = true;
+            });
+            
+            socket.on('you-can-answer', () => {
+                if (myRole === 'top' && currentRound && currentRound.state === 'waiting_answer') {
+                    canType = true;
+                    chatInput.disabled = false;
+                    chatInput.placeholder = "Answer: Truth or Dare? Then your response...";
+                    addMessage('🔔 Now you can answer!', 'system');
+                    playBeep();
+                }
+            });
+            
+            function findPlayerName(id) {
+                // This would need player list - simplified version
+                return id === myId ? 'You' : 'Someone';
+            }
+            
+            // UI Button Handlers
+            readyBtn.onclick = () => {
+                socket.emit('player-ready', !isReady);
+            };
+            
+            spinBtn.onclick = () => {
+                if (gameActive && !currentRound) {
+                    spinBottle3D();
+                    socket.emit('spin-bottle');
+                    spinBtn.disabled = true;
+                }
+            };
+            
+            nextRoundBtn.onclick = () => {
+                socket.emit('next-round');
+                nextRoundBtn.disabled = true;
+                spinBtn.disabled = false;
+                canType = false;
+                chatInput.disabled = true;
+                chatInput.value = '';
+                addMessage('🔄 Starting new round...', 'system');
+            };
+            
+            sendBtn.onclick = () => {
+                if (!canType) return;
+                const message = chatInput.value.trim();
+                if (!message) return;
+                
+                if (myRole === 'bottom' && currentRound && currentRound.state === 'waiting_question') {
+                    socket.emit('send-question', message);
+                    addMessage(`You ask: "${message}"`, 'question');
+                    canType = false;
+                    chatInput.disabled = true;
+                    chatInput.value = '';
+                } else if (myRole === 'top' && currentRound && currentRound.state === 'waiting_answer') {
+                    socket.emit('send-answer', message);
+                    addMessage(`You answer: "${message}"`, 'answer');
+                    canType = false;
+                    chatInput.disabled = true;
+                    chatInput.value = '';
+                }
+            };
+            
+            chatInput.onkeypress = (e) => {
+                if (e.key === 'Enter') sendBtn.onclick();
+            };
+            
+            // Initialize 3D scene
+            initThreeJS();
+        }
+        
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a2a);
+            scene.fog = new THREE.FogExp2(0x0a0a2a, 0.008);
+            
+            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+            camera.position.set(0, 2, 5);
+            camera.lookAt(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1);
+            mainLight.position.set(5, 10, 7);
+            mainLight.castShadow = true;
+            scene.add(mainLight);
+            
+            const fillLight = new THREE.PointLight(0x4466cc, 0.5);
+            fillLight.position.set(-2, 3, 4);
+            scene.add(fillLight);
+            
+            const backLight = new THREE.PointLight(0xffaa66, 0.3);
+            backLight.position.set(0, 2, -3);
+            scene.add(backLight);
+            
+            // Ground effect
+            const gridHelper = new THREE.GridHelper(10, 20, 0x88aaff, 0x335588);
+            gridHelper.position.y = -1;
+            scene.add(gridHelper);
+            
+            // Create bottle
+            createBottle();
+            
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                if (spinning && bottleGroup) {
+                    const elapsed = Date.now() - spinStartTime;
+                    let t = Math.min(1, elapsed / spinDuration);
+                    // Easing out cubic
+                    const easeOut = 1 - Math.pow(1 - t, 3);
+                    const currentRotation = spinStartRotation + (spinTargetRotation - spinStartRotation) * easeOut;
+                    bottleGroup.rotation.y = currentRotation;
+                    
+                    if (t >= 1) {
+                        spinning = false;
+                        // Determine who is bottom/top based on final rotation
+                        const finalRotation = (bottleGroup.rotation.y % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+                        // Bottom is forward direction (0 rad), top is opposite (PI rad)
+                        // This is visual only - actual assignment done by server
+                        addMessage('Bottle stopped spinning!', 'system');
+                    }
+                }
+                
+                // Slight idle rotation
+                if (!spinning && bottleGroup) {
+                    bottleGroup.rotation.y += 0.002;
+                }
+                
+                renderer.render(scene, camera);
+            }
+            animate();
+            
+            window.addEventListener('resize', onWindowResize, false);
+            function onWindowResize() {
+                const newWidth = container.clientWidth;
+                const newHeight = container.clientHeight;
+                camera.aspect = newWidth / newHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(newWidth, newHeight);
+            }
+        }
+        
+        function createBottle() {
+            bottleGroup = new THREE.Group();
+            
+            // Bottle body (cylinder)
+            const bodyGeo = new THREE.CylinderGeometry(0.4, 0.5, 1.2, 32);
+            const material = new THREE.MeshStandardMaterial({ color: 0x44aa88, metalness: 0.7, roughness: 0.3, transparent: true, opacity: 0.7 });
+            const body = new THREE.Mesh(bodyGeo, material);
+            body.castShadow = true;
+            body.receiveShadow = true;
+            body.position.y = 0;
+            bottleGroup.add(body);
+            
+            // Bottle neck
+            const neckGeo = new THREE.CylinderGeometry(0.2, 0.4, 0.5, 32);
+            const neck = new THREE.Mesh(neckGeo, material);
+            neck.position.y = 0.7;
+            neck.castShadow = true;
+            bottleGroup.add(neck);
+            
+            // Bottle cap
+            const capGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.1, 16);
+            const capMaterial = new THREE.MeshStandardMaterial({ color: 0xcc8844, metalness: 0.9 });
+            const cap = new THREE.Mesh(capGeo, capMaterial);
+            cap.position.y = 0.95;
+            cap.castShadow = true;
+            bottleGroup.add(cap);
+            
+            // Bottom indicator (red ring)
+            const bottomRingGeo = new THREE.TorusGeometry(0.45, 0.05, 16, 64);
+            const redMaterial = new THREE.MeshStandardMaterial({ color: 0xff3333 });
+            const bottomRing = new THREE.Mesh(bottomRingGeo, redMaterial);
+            bottomRing.rotation.x = Math.PI / 2;
+            bottomRing.position.y = -0.5;
+            bottleGroup.add(bottomRing);
+            
+            // Top indicator (gold ring)
+            const topRingGeo = new THREE.TorusGeometry(0.3, 0.05, 16, 64);
+            const goldMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa33 });
+            const topRing = new THREE.Mesh(topRingGeo, goldMaterial);
+            topRing.rotation.x = Math.PI / 2;
+            topRing.position.y = 0.85;
+            bottleGroup.add(topRing);
+            
+            // Add glow effect
+            const glowGeo = new THREE.SphereGeometry(0.6, 16, 16);
+            const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.1 });
+            const glow = new THREE.Mesh(glowGeo, glowMaterial);
+            bottleGroup.add(glow);
+            
+            scene.add(bottleGroup);
+        }
+        
+        function spinBottle3D() {
+            if (spinning) return;
+            spinning = true;
+            spinStartTime = Date.now();
+            spinStartRotation = bottleGroup.rotation.y;
+            // Random rotation between 5 and 15 full turns
+            const turns = 5 + Math.random() * 10;
+            spinTargetRotation = spinStartRotation + (turns * Math.PI * 2);
+            playBeep();
+        }
+    </script>
+</body>
+</html>
