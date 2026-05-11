@@ -42,7 +42,7 @@ function broadcastGameState() {
 
 function checkAutoStartRound() {
     const allPlayers = Object.values(players);
-    if (!gameActive && allPlayers.length >= 8 && allPlayers.every(p => p.ready)) {
+    if (!gameActive && allPlayers.length >= 4 && allPlayers.every(p => p.ready)) {
         // Auto-start game when 8+ players and all ready
         gameActive = true;
         broadcastGameState();
