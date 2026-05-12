@@ -7,173 +7,308 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname)));
 
-// Store game state
-let players = {}; // socket.id -> { anonymousName, ready, isActive }
-let gameActive = false;
-let currentRound = null; // { bottomId, topId, askerId, answererId, state, question, answer }
+// Game state
+let gameState = {
+    players: [],           // { id, name, isAdmin }
+    bracket: [],           // tournament bracket
+    currentMatch: null,    // { playerA, playerB, leg, aggregate, board, turn, gameActive, winner }
+    matchIndex: 0,         // current match index in bracket
+    roundIndex: 0,         // current round index
+    tournamentStarted: false,
+    availableSpots: 16     // UEFA-style round of 16
+};
 
-const anonymousNames = [
-    'Purple Panda', 'Silent Wolf', 'Crimson Fox', 'Golden Eagle', 'Shadow Cat',
-    'Mystic Owl', 'Thunder Hawk', 'Frost Dragon', 'Ember Phoenix', 'Storm Tiger',
-    'Night Raven', 'Blazing Lion', 'Ocean Serpent', 'Iron Viper', 'Crystal Cobra'
-];
-
-function generateAnonymousName() {
-    const available = anonymousNames.filter(name => !Object.values(players).some(p => p.anonymousName === name));
-    if (available.length === 0) return `Guest${Math.floor(Math.random() * 1000)}`;
-    return available[Math.floor(Math.random() * available.length)];
-}
-
-function broadcastPlayers() {
-    const playersList = Object.entries(players).map(([id, p]) => ({
-        id,
-        anonymousName: p.anonymousName,
-        ready: p.ready,
-        isActive: p.isActive
-    }));
-    io.emit('players-update', playersList);
-}
-
-function broadcastGameState() {
-    io.emit('game-state', { gameActive, currentRound });
-}
-
-function checkAutoStartRound() {
-    const allPlayers = Object.values(players);
-    if (!gameActive && allPlayers.length >= 4 && allPlayers.every(p => p.ready)) {
-        // Auto-start game when 8+ players and all ready
-        gameActive = true;
-        broadcastGameState();
+// Helper: Create empty bracket
+function createBracket(playerList) {
+    // Fill to next power of 2 (8, 16, 32)
+    let size = 8;
+    while (size < playerList.length) size *= 2;
+    
+    let bracket = [];
+    for (let i = 0; i < size; i++) {
+        bracket.push(playerList[i] || { name: 'TBD', id: null });
     }
+    return bracket;
+}
+
+// Helper: Build matches from bracket
+function buildMatchesFromBracket(bracket, round = 0) {
+    let matches = [];
+    let step = Math.pow(2, round + 1);
+    for (let i = 0; i < bracket.length; i += step) {
+        matches.push({
+            playerA: bracket[i],
+            playerB: bracket[i + step/2],
+            winner: null,
+            leg1Result: null,
+            leg2Result: null,
+            leg3Result: null
+        });
+    }
+    return matches;
 }
 
 io.on('connection', (socket) => {
-    console.log('New player connected:', socket.id);
+    console.log('User connected:', socket.id);
     
-    // Assign anonymous name
-    const anonymousName = generateAnonymousName();
-    players[socket.id] = { anonymousName, ready: false, isActive: true };
-    broadcastPlayers();
-    
-    // Send current state to new player
-    socket.emit('game-state', { gameActive, currentRound });
-    
-    // Handle ready toggle
-    socket.on('player-ready', (ready) => {
-        if (players[socket.id]) {
-            players[socket.id].ready = ready;
-            broadcastPlayers();
-            checkAutoStartRound();
+    // Register player
+    socket.on('register', ({ name, isAdmin }) => {
+        const existing = gameState.players.find(p => p.name === name);
+        if (existing) {
+            socket.emit('registered', { success: false, error: 'Name already taken' });
+            return;
         }
+        
+        const player = { id: socket.id, name, isAdmin };
+        gameState.players.push(player);
+        socket.emit('registered', { success: true, player });
+        
+        // If not started and we have enough players, auto-fill bracket
+        if (!gameState.tournamentStarted && gameState.players.length >= 2) {
+            // Wait for 16 or max players
+            if (gameState.players.length >= gameState.availableSpots || gameState.players.length === gameState.availableSpots) {
+                startTournament();
+            }
+        }
+        
+        io.emit('stateUpdate', gameState);
     });
     
-    // Handle spin bottle (only when game active and no round in progress)
-    socket.on('spin-bottle', () => {
-        if (!gameActive || currentRound) return;
-        
-        const playerIds = Object.keys(players);
-        if (playerIds.length < 2) return;
-        
-        // Random bottom and top (different players)
-        let bottomId = playerIds[Math.floor(Math.random() * playerIds.length)];
-        let topId = bottomId;
-        while (topId === bottomId && playerIds.length > 1) {
-            topId = playerIds[Math.floor(Math.random() * playerIds.length)];
+    function startTournament() {
+        // Shuffle players
+        let shuffled = [...gameState.players];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
         
-        currentRound = {
-            bottomId,
-            topId,
-            askerId: bottomId, // bottom asks
-            answererId: topId, // top answers
-            state: 'waiting_question', // waiting_question, waiting_answer, completed
-            question: null,
-            answer: null
+        // Fill bracket slots
+        let bracketSlots = [];
+        for (let i = 0; i < gameState.availableSpots; i++) {
+            bracketSlots.push(shuffled[i] || { name: 'BYE', id: null });
+        }
+        
+        gameState.bracket = bracketSlots;
+        gameState.matches = buildMatchesFromBracket(bracketSlots, 0);
+        gameState.currentRound = 0;
+        gameState.currentMatchIdx = 0;
+        gameState.tournamentStarted = true;
+        
+        // Start first match
+        startMatch(0, 0);
+        
+        io.emit('stateUpdate', gameState);
+    }
+    
+    function startMatch(round, matchIdx) {
+        const match = gameState.matches[matchIdx];
+        if (!match || !match.playerA || !match.playerB || match.playerA.name === 'BYE') {
+            // Auto-advance if BYE
+            advanceToNextMatch();
+            return;
+        }
+        
+        gameState.currentMatch = {
+            playerA: match.playerA,
+            playerB: match.playerB,
+            leg: 1,
+            aggregate: { A: 0, B: 0 },
+            board: Array(9).fill(null),
+            turn: 'X', // X goes first
+            gameActive: true,
+            winner: null,
+            legWinner: null,
+            legOver: false,
+            xoChoice: { A: null, B: null } // null, 'X', or 'O'
         };
         
-        broadcastGameState();
+        io.emit('stateUpdate', gameState);
+    }
+    
+    // Player chooses X or O
+    socket.on('chooseXO', ({ playerId, choice }) => {
+        if (!gameState.currentMatch) return;
+        const match = gameState.currentMatch;
+        let isPlayerA = match.playerA.id === playerId;
+        let isPlayerB = match.playerB.id === playerId;
         
-        // Start 20-second countdown
-        let timeLeft = 20;
-        const countdownInterval = setInterval(() => {
-            if (!currentRound) {
-                clearInterval(countdownInterval);
+        if (!isPlayerA && !isPlayerB) return;
+        
+        if (isPlayerA) match.xoChoice.A = choice;
+        if (isPlayerB) match.xoChoice.B = choice;
+        
+        // If both chose, assign actual X/O
+        if (match.xoChoice.A && match.xoChoice.B) {
+            if (match.xoChoice.A === match.xoChoice.B) {
+                // Conflict - randomize
+                match.playerASymbol = Math.random() < 0.5 ? 'X' : 'O';
+            } else {
+                match.playerASymbol = match.xoChoice.A;
+            }
+            match.playerBSymbol = match.playerASymbol === 'X' ? 'O' : 'X';
+            match.turn = 'X'; // X always goes first
+            io.emit('stateUpdate', gameState);
+        }
+    });
+    
+    // Make a move
+    socket.on('makeMove', ({ playerId, index }) => {
+        if (!gameState.currentMatch) return;
+        const match = gameState.currentMatch;
+        if (!match.gameActive || match.legOver) return;
+        
+        // Check if it's this player's turn
+        let isPlayerA = match.playerA.id === playerId;
+        let isPlayerB = match.playerB.id === playerId;
+        let playerSymbol = isPlayerA ? match.playerASymbol : (isPlayerB ? match.playerBSymbol : null);
+        if (!playerSymbol) return;
+        if (match.turn !== playerSymbol) return;
+        if (match.board[index] !== null) return;
+        
+        // Make move
+        match.board[index] = playerSymbol;
+        
+        // Check win/draw
+        let win = checkWin(match.board);
+        if (win) {
+            match.gameActive = false;
+            match.legOver = true;
+            match.legWinner = (playerSymbol === match.playerASymbol) ? 'A' : 'B';
+            // Update aggregate
+            if (match.legWinner === 'A') match.aggregate.A++;
+            else match.aggregate.B++;
+            
+            io.emit('stateUpdate', gameState);
+            
+            // Auto-advance leg after 2 seconds
+            setTimeout(() => nextLegOrMatch(), 2000);
+        } else if (match.board.every(cell => cell !== null)) {
+            // Draw
+            match.gameActive = false;
+            match.legOver = true;
+            match.legWinner = null; // draw
+            io.emit('stateUpdate', gameState);
+            setTimeout(() => nextLegOrMatch(), 2000);
+        } else {
+            // Switch turn
+            match.turn = match.turn === 'X' ? 'O' : 'X';
+            io.emit('stateUpdate', gameState);
+        }
+    });
+    
+    function checkWin(board) {
+        const lines = [
+            [0,1,2], [3,4,5], [6,7,8],
+            [0,3,6], [1,4,7], [2,5,8],
+            [0,4,8], [2,4,6]
+        ];
+        for (let line of lines) {
+            const [a,b,c] = line;
+            if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    function nextLegOrMatch() {
+        const match = gameState.currentMatch;
+        if (!match) return;
+        
+        if (match.leg === 1) {
+            // Start leg 2
+            match.leg = 2;
+            match.board = Array(9).fill(null);
+            match.gameActive = true;
+            match.legOver = false;
+            match.legWinner = null;
+            match.turn = 'X';
+            match.xoChoice = { A: null, B: null };
+            match.playerASymbol = null;
+            match.playerBSymbol = null;
+            io.emit('stateUpdate', gameState);
+        } else if (match.leg === 2) {
+            // Check aggregate
+            if (match.aggregate.A !== match.aggregate.B) {
+                // Winner decided
+                const winner = match.aggregate.A > match.aggregate.B ? match.playerA : match.playerB;
+                finishMatch(winner);
+            } else {
+                // Leg 3
+                match.leg = 3;
+                match.board = Array(9).fill(null);
+                match.gameActive = true;
+                match.legOver = false;
+                match.legWinner = null;
+                match.turn = 'X';
+                match.xoChoice = { A: null, B: null };
+                match.playerASymbol = null;
+                match.playerBSymbol = null;
+                io.emit('stateUpdate', gameState);
+            }
+        } else if (match.leg === 3) {
+            // Leg 3 winner
+            const winner = match.legWinner === 'A' ? match.playerA : match.playerB;
+            finishMatch(winner);
+        }
+    }
+    
+    function finishMatch(winner) {
+        // Update bracket
+        const currentMatchObj = gameState.matches[gameState.currentMatchIdx];
+        currentMatchObj.winner = winner;
+        
+        // Advance winner to next round
+        advanceToNextMatch();
+    }
+    
+    function advanceToNextMatch() {
+        gameState.currentMatchIdx++;
+        if (gameState.currentMatchIdx >= gameState.matches.length) {
+            // Next round
+            gameState.currentRound++;
+            gameState.matches = buildMatchesFromBracket(gameState.bracket, gameState.currentRound);
+            gameState.currentMatchIdx = 0;
+            
+            if (gameState.matches.length === 0 || gameState.matches[0].playerA.name === 'TBD') {
+                io.emit('tournamentComplete', { winner: gameState.players.find(p => p.id === gameState.matches[0]?.winner?.id) });
                 return;
             }
-            io.emit('countdown', timeLeft);
-            if (timeLeft === 3 || timeLeft === 2 || timeLeft === 1) {
-                // Beep sound handled client-side
-                io.emit('beep');
-            }
-            if (timeLeft <= 0) {
-                clearInterval(countdownInterval);
-                if (currentRound.state !== 'completed') {
-                    currentRound.state = 'completed';
-                    broadcastGameState();
-                    io.emit('timeout');
-                }
-            }
-            timeLeft--;
-        }, 1000);
+        }
         
-        // Store interval to clear later
-        socket.intervalId = countdownInterval;
+        startMatch(gameState.currentRound, gameState.currentMatchIdx);
+        io.emit('stateUpdate', gameState);
+    }
+    
+    // Admin force next
+    socket.on('adminForceNext', () => {
+        advanceToNextMatch();
     });
     
-    // Handle question from bottom
-    socket.on('send-question', (question) => {
-        if (!currentRound || currentRound.state !== 'waiting_question') return;
-        if (socket.id !== currentRound.bottomId) return;
-        
-        currentRound.question = question;
-        currentRound.state = 'waiting_answer';
-        broadcastGameState();
-        
-        // Notify top that they can answer
-        io.to(currentRound.topId).emit('you-can-answer');
+    socket.on('adminReset', () => {
+        gameState = {
+            players: [],
+            bracket: [],
+            currentMatch: null,
+            matchIndex: 0,
+            roundIndex: 0,
+            tournamentStarted: false,
+            availableSpots: 16
+        };
+        io.emit('stateUpdate', gameState);
     });
     
-    // Handle answer from top
-    socket.on('send-answer', (answer) => {
-        if (!currentRound || currentRound.state !== 'waiting_answer') return;
-        if (socket.id !== currentRound.topId) return;
-        
-        currentRound.answer = answer;
-        currentRound.state = 'completed';
-        broadcastGameState();
-    });
-    
-    // Handle next round
-    socket.on('next-round', () => {
-        if (!gameActive) return;
-        currentRound = null;
-        broadcastGameState();
-    });
-    
-    // Handle disconnection
     socket.on('disconnect', () => {
-        console.log('Player disconnected:', socket.id);
-        delete players[socket.id];
-        broadcastPlayers();
-        
-        // If current round player left, reset round
-        if (currentRound && (currentRound.bottomId === socket.id || currentRound.topId === socket.id)) {
-            currentRound = null;
-            broadcastGameState();
-        }
-        
-        // If less than 8 players, deactivate game
-        if (gameActive && Object.keys(players).length < 8) {
-            gameActive = false;
-            currentRound = null;
-            broadcastGameState();
-        }
+        console.log('User disconnected:', socket.id);
+        gameState.players = gameState.players.filter(p => p.id !== socket.id);
+        io.emit('stateUpdate', gameState);
     });
 });
 
-server.listen(3000, () => {
-    console.log('Server running on http://localhost:3000');
-    console.log('For classroom: find your local IP (ipconfig on Windows, ifconfig on Mac/Linux) and use http://YOUR_IP:3000');
+const PORT = 3000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`For other devices, use your computer's IP address:3000`);
 });
